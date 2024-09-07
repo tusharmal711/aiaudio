@@ -3,67 +3,197 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Text-to-Speech Example with Download</title>
+    <title>Voice Editor with Play, Download, and Share</title>
     <link rel="stylesheet" href="index.css">
 </head>
 <body>
     <div class="container">
-        <h1>Text-to-Speech Example</h1>
-        <textarea id="text-input" rows="4" placeholder="Enter text here..."></textarea><br>
-        <button onclick="speakText()">Speak</button>
-        <button id="download-btn" disabled>Download Audio</button>
+        <h1>Voice Editor Example</h1>
+        <button id="record-btn">Start Recording</button>
+        <button id="stop-btn" disabled>Stop Recording</button>
+        <br><br>
+
+        <label for="pitch">Pitch:</label>
+        <input type="range" id="pitch" min="0.5" max="2" step="0.1" value="1">
+        <span id="pitch-value">1</span>
+        <br>
+
+        <label for="rate">Rate:</label>
+        <input type="range" id="rate" min="0.5" max="2" step="0.1" value="1">
+        <span id="rate-value">1</span>
+        <br>
+
+        <label for="speed">Speed:</label>
+        <input type="range" id="speed" min="0.5" max="2" step="0.1" value="1">
+        <span id="speed-value">1</span>
+        <br><br>
+
+        <button id="regenerate-btn" disabled>Regenerate Voice</button>
+        <button id="play-btn" disabled>Play Edited Audio</button>
+        <button id="download-btn" disabled>Download Edited Audio</button>
+        <button id="share-btn" disabled>Share Audio</button>
     </div>
 
     <script>
         let mediaRecorder;
         let audioChunks = [];
         let audioBlob;
+        let audioContext;
+        let audioBuffer;
+        let audioURL;
+        let regeneratedAudio;
 
-        function speakText() {
-            const text = document.getElementById('text-input').value;
+        const recordBtn = document.getElementById('record-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const regenerateBtn = document.getElementById('regenerate-btn');
+        const playBtn = document.getElementById('play-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const shareBtn = document.getElementById('share-btn');
+        const pitchSlider = document.getElementById('pitch');
+        const rateSlider = document.getElementById('rate');
+        const speedSlider = document.getElementById('speed');
+        const pitchValue = document.getElementById('pitch-value');
+        const rateValue = document.getElementById('rate-value');
+        const speedValue = document.getElementById('speed-value');
 
-            if ('speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.voice = speechSynthesis.getVoices()[0];
-                utterance.pitch = 1;
-                utterance.rate = 1;
+        // Update pitch, rate, and speed display
+        pitchSlider.addEventListener('input', () => pitchValue.textContent = pitchSlider.value);
+        rateSlider.addEventListener('input', () => rateValue.textContent = rateSlider.value);
+        speedSlider.addEventListener('input', () => speedValue.textContent = speedSlider.value);
 
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Start recording voice
+        recordBtn.addEventListener('click', () => {
+            navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
                 const destination = audioContext.createMediaStreamDestination();
-                const source = audioContext.createMediaStreamSource(destination.stream);
+                source.connect(destination);
                 mediaRecorder = new MediaRecorder(destination.stream);
 
                 mediaRecorder.start();
+                audioChunks = [];
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
 
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
+                recordBtn.disabled = true;
+                stopBtn.disabled = false;
+            });
+        });
 
-                utterance.onend = () => {
-                    mediaRecorder.stop();
-                    mediaRecorder.onstop = () => {
-                        audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        const downloadButton = document.getElementById('download-btn');
-                        downloadButton.disabled = false;
-                        downloadButton.onclick = () => downloadAudio(audioBlob);
-                    };
-                };
+        // Stop recording and process audio
+        stopBtn.addEventListener('click', () => {
+            mediaRecorder.stop();
+            mediaRecorder.onstop = async () => {
+                audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-                speechSynthesis.speak(utterance);
-            } else {
-                alert("Text-to-speech is not supported in this browser.");
+                regenerateBtn.disabled = false;
+                stopBtn.disabled = true;
+            };
+        });
+
+        // Regenerate voice with modified pitch, rate, and speed
+        regenerateBtn.addEventListener('click', async () => {
+            const playbackRate = rateSlider.value;
+            const pitch = pitchSlider.value;
+            const speed = speedSlider.value;
+
+            const offlineContext = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+            const bufferSource = offlineContext.createBufferSource();
+            bufferSource.buffer = audioBuffer;
+            bufferSource.playbackRate.value = playbackRate * speed;
+
+            const gainNode = offlineContext.createGain();
+            gainNode.gain.value = pitch;
+            bufferSource.connect(gainNode);
+            gainNode.connect(offlineContext.destination);
+
+            bufferSource.start();
+            const renderedBuffer = await offlineContext.startRendering();
+
+            // Create a Blob from the regenerated audio and enable download, play, and share
+            const newBuffer = renderedBuffer.getChannelData(0);
+            const wavBlob = bufferToWave(newBuffer, renderedBuffer.length);
+            audioURL = URL.createObjectURL(wavBlob);
+            regeneratedAudio = new Audio(audioURL);
+
+            playBtn.disabled = false;
+            downloadBtn.disabled = false;
+            shareBtn.disabled = false;
+
+            playBtn.onclick = () => playAudio();
+            downloadBtn.onclick = () => downloadAudio(wavBlob);
+            shareBtn.onclick = () => shareAudio(wavBlob);
+        });
+
+        // Play the regenerated audio
+        function playAudio() {
+            regeneratedAudio.play();
+        }
+
+        // Helper function to convert audio buffer to WAV format Blob
+        function bufferToWave(buffer, len) {
+            const numOfChan = 1;
+            const bufferLength = len * 2 + 44;
+            const wavBuffer = new ArrayBuffer(bufferLength);
+            const view = new DataView(wavBuffer);
+            const sampleRate = 44100;
+            const bitDepth = 16;
+
+            // RIFF chunk descriptor
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + bufferLength, true);
+            writeString(view, 8, 'WAVE');
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, numOfChan, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * numOfChan * bitDepth / 8, true);
+            view.setUint16(32, numOfChan * bitDepth / 8, true);
+            view.setUint16(34, bitDepth, true);
+            writeString(view, 36, 'data');
+            view.setUint32(40, bufferLength, true);
+
+            let offset = 44;
+            for (let i = 0; i < len; i++, offset += 2) {
+                const sample = Math.max(-1, Math.min(1, buffer[i]));
+                view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
             }
         }
 
+        // Download the modified audio as a WAV file
         function downloadAudio(blob) {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
             a.href = url;
-            a.download = 'speech.wav';
+            a.download = 'modified-voice.wav';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        }
+
+        // Share the modified audio on social media
+        function shareAudio(blob) {
+            const url = URL.createObjectURL(blob);
+            if (navigator.share) {
+                navigator.share({
+                    title: 'Modified Audio',
+                    text: 'Check out this modified audio file!',
+                    url: url
+                }).catch(err => console.error('Error sharing:', err));
+            } else {
+                alert('Sharing is not supported in your browser');
+            }
         }
     </script>
 </body>
