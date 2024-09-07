@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text-to-Speech Example with Download</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Text-to-Speech Example</h1>
+        <textarea id="text-input" rows="4" placeholder="Enter text here..."></textarea><br>
+        <button onclick="speakText()">Speak</button>
+        <button id="download-btn" disabled>Download Audio</button>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob;
+
+        function speakText() {
+            const text = document.getElementById('text-input').value;
+
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.voice = speechSynthesis.getVoices()[0];
+                utterance.pitch = 1;
+                utterance.rate = 1;
+
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const destination = audioContext.createMediaStreamDestination();
+                const source = audioContext.createMediaStreamSource(destination.stream);
+                mediaRecorder = new MediaRecorder(destination.stream);
+
+                mediaRecorder.start();
+
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+
+                utterance.onend = () => {
+                    mediaRecorder.stop();
+                    mediaRecorder.onstop = () => {
+                        audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const downloadButton = document.getElementById('download-btn');
+                        downloadButton.disabled = false;
+                        downloadButton.onclick = () => downloadAudio(audioBlob);
+                    };
+                };
+
+                speechSynthesis.speak(utterance);
+            } else {
+                alert("Text-to-speech is not supported in this browser.");
+            }
+        }
+
+        function downloadAudio(blob) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'speech.wav';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    </script>
+</body>
+</html>
